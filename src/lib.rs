@@ -1,3 +1,4 @@
+use semver::Version;
 use worker::*;
 use serde_json::json;
 use chrono::{DateTime, FixedOffset};
@@ -24,14 +25,24 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
 
     router
         .get_async("/:target/:arch/:current_version", get_release)
+        .get_async("/download/:target/:arch", get_download)
         .run(req, env)
         .await
 }
 
 async fn get_release(_req: worker::Request, ctx: RouteContext<()>) -> Result<Response> {
-    let target = ctx.param("target").unwrap();
-    let arch = ctx.param("arch").unwrap();
-    let current_version = ctx.param("current_version").unwrap();
+    let target = match ctx.param("target") {
+        Some(target) => target,
+        None => return Response::error("Missing target", 400),
+    };
+    let arch = match ctx.param("arch") {
+        Some(arch) => arch,
+        None => return Response::error("Missing arch", 400),
+    };
+    let current_version = match ctx.param("current_version") {
+        Some(current_version) => current_version,
+        None => return Response::error("Missing current_version", 400),
+    };
 
     let client = Client::new();
     let url = "https://api.github.com/repos/Valink-Solutions/teller/releases";
@@ -53,7 +64,7 @@ async fn get_release(_req: worker::Request, ctx: RouteContext<()>) -> Result<Res
         None => return Response::error("No new release found", 404),
     };
 
-    let (file_extension, sig_file_extension) = get_file_extension(&target, &arch);
+    let (file_extension, sig_file_extension) = get_update_extension(&target, &arch);
 
     if file_extension.is_empty() || sig_file_extension.is_empty() {
         return Response::error("Invalid target", 400);
@@ -102,7 +113,69 @@ async fn get_release(_req: worker::Request, ctx: RouteContext<()>) -> Result<Res
     Ok(Response::from_json(&response_body)?)
 }
 
-fn get_file_extension(target: &str, _arch: &str) -> (String, String) {
+async fn get_download(_req: worker::Request, ctx: RouteContext<()>) -> Result<Response> {
+
+    let target = match ctx.param("target") {
+        Some(target) => target,
+        None => return Response::error("Missing target", 400),
+    };
+    let arch = match ctx.param("arch") {
+        Some(arch) => arch,
+        None => return Response::error("Missing arch", 400),
+    };
+
+    let file_extension = get_download_extension(&target, &arch);
+
+    let client = Client::new();
+    let url = "https://api.github.com/repos/Valink-Solutions/teller/releases";
+    let resp = match client.get(url)
+        .header("User-Agent", "chunkvault-updater")
+        .send()
+        .await {
+        Ok(resp) => resp,
+        Err(_) => return Response::error("Failed to fetch releases", 500),
+    };
+
+    let releases: Vec<GitHubRelease> = match resp.json().await {
+        Ok(releases) => releases,
+        Err(_) => return Response::error("Failed to parse releases", 500),
+    };
+
+    
+    let latest_release = match releases.iter().max_by(|a, b| {
+        let version_a = Version::parse(a.tag_name.trim_start_matches('v')).unwrap_or_else(|_| Version::new(0, 0, 0));
+        let version_b = Version::parse(b.tag_name.trim_start_matches('v')).unwrap_or_else(|_| Version::new(0, 0, 0));
+        version_a.cmp(&version_b)
+    }) {
+        Some(release) => release,
+        None => return Response::error("No new release found", 404),
+    };
+
+    let download_url_str = match latest_release.assets.iter().find(|asset| {
+        asset.name.ends_with(&file_extension)
+    }) {
+        Some(asset) => &asset.browser_download_url,
+        None => return Response::error("No asset found for target", 404),
+    };
+
+    let download_url = match Url::parse(download_url_str) {
+        Ok(url) => url,
+        Err(_) => return Response::error("Invalid URL", 400),
+    };
+
+    Response::redirect(download_url)
+}
+
+fn get_download_extension(target: &str, _arch: &str) -> String {
+    match target {
+        "darwin" => ".dmg".to_string(),
+        "linux" => ".AppImage".to_string(),
+        "windows" => "-setup.exe".to_string(),
+        _ => "".to_string(),
+    }
+}
+
+fn get_update_extension(target: &str, _arch: &str) -> (String, String) {
     match target {
         "darwin" => (".app.tar.gz".to_string(), ".app.tar.gz.sig".to_string()),
         "linux" => (".AppImage.tar.gz".to_string(), ".AppImage.tar.gz.sig".to_string()),
