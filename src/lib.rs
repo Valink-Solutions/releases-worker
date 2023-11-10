@@ -76,7 +76,7 @@ async fn get_release(_req: worker::Request, ctx: RouteContext<()>) -> Result<Res
     };
 
     let download_url = update_asset.browser_download_url.clone();
-    let new_version = latest_release.tag_name.clone();
+    let new_version = latest_release.tag_name.chars().filter(|c| c.is_digit(10) || *c == '.').collect::<String>();
 
     let pub_date: DateTime<FixedOffset> = match DateTime::parse_from_rfc3339(
         latest_release.published_at.as_str(),
@@ -108,9 +108,15 @@ async fn get_release(_req: worker::Request, ctx: RouteContext<()>) -> Result<Res
         "url": download_url,
         "signature": signature,
         "notes": clean_markdown(&notes)
-    }).to_string();
+    });
 
-    Ok(Response::from_json(&response_body)?)
+    console_log!("{} {} got response: {}", target, arch, response_body);
+
+    let mut response = Response::from_json(&response_body)?;
+
+    response.headers_mut().set("Content-Type", "application/json").unwrap();
+
+    Ok(response)
 }
 
 async fn get_download(_req: worker::Request, ctx: RouteContext<()>) -> Result<Response> {
@@ -167,7 +173,9 @@ async fn get_download(_req: worker::Request, ctx: RouteContext<()>) -> Result<Re
 }
 
 fn get_download_extension(target: &str, _arch: &str) -> String {
-    match target {
+    match target.to_lowercase().as_str() {
+        "mac" => ".dmg".to_string(),
+        "macos" => ".dmg".to_string(),
         "darwin" => ".dmg".to_string(),
         "linux" => ".AppImage".to_string(),
         "windows" => "-setup.exe".to_string(),
@@ -176,7 +184,9 @@ fn get_download_extension(target: &str, _arch: &str) -> String {
 }
 
 fn get_update_extension(target: &str, _arch: &str) -> (String, String) {
-    match target {
+    match target.to_lowercase().as_str() {
+        "mac" => (".app.tar.gz".to_string(), ".app.tar.gz.sig".to_string()),
+        "macos" => (".app.tar.gz".to_string(), ".app.tar.gz.sig".to_string()),
         "darwin" => (".app.tar.gz".to_string(), ".app.tar.gz.sig".to_string()),
         "linux" => (".AppImage.tar.gz".to_string(), ".AppImage.tar.gz.sig".to_string()),
         "windows" => (".nsis.zip".to_string(), ".nsis.zip.sig".to_string()),
@@ -185,17 +195,19 @@ fn get_update_extension(target: &str, _arch: &str) -> (String, String) {
 }
 
 fn clean_markdown(markdown: &str) -> String {
-    let header_re = regex::Regex::new(r"(?m)^#+.*\n?").unwrap();
-    let bold_re = regex::Regex::new(r"\*\*.*?\*\*").unwrap();
-    let italic_re = regex::Regex::new(r"_.*?_").unwrap();
-    let link_re = regex::Regex::new(r"\[.*?\]\(.*?\)").unwrap();
+    let header_re = regex::Regex::new(r"(?m)^#+").unwrap();
+    let bold_re = regex::Regex::new(r"\*\*(.*?)\*\*").unwrap();
+    let italic_re = regex::Regex::new(r"_(.*?)_").unwrap();
+    let link_re = regex::Regex::new(r"\[(.*?)\]\(.*?\)").unwrap();
     let specific_text_re = regex::Regex::new(r"\*\*_See the assets to download and install this version\._\*\*").unwrap();
+    let notes_re = regex::Regex::new(r"### Notes").unwrap();
 
-    let no_headers = header_re.replace_all(markdown, "");
-    let no_bold = bold_re.replace_all(&no_headers, "");
-    let no_italic = italic_re.replace_all(&no_bold, "");
-    let no_links = link_re.replace_all(&no_italic, "");
-    let cleaned_text = specific_text_re.replace_all(&no_links, "");
+    let no_specific_text = specific_text_re.replace_all(&markdown, "");
+    let no_notes = notes_re.replace_all(&no_specific_text, "");
+    let no_headers = header_re.replace_all(&no_notes, "");
+    let no_bold = bold_re.replace_all(&no_headers, "$1");
+    let no_italic = italic_re.replace_all(&no_bold, "$1");
+    let cleaned_text = link_re.replace_all(&no_italic, "$1");
 
     cleaned_text.to_string()
 }
