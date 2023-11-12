@@ -13,10 +13,11 @@ struct GitHubRelease {
     assets: Vec<GitHubAsset>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug)] 
 struct GitHubAsset {
     name: String,
     browser_download_url: String,
+    download_count: i64,
 }
 
 #[event(fetch)]
@@ -26,9 +27,37 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
     router
         .get_async("/:target/:arch/:current_version", get_release)
         .get_async("/download/:target/:arch", get_download)
+        .get_async("/total_downloads", get_total_downloads)
         .run(req, env)
         .await
 }
+
+async fn get_total_downloads(_req: worker::Request, _ctx: RouteContext<()>) -> Result<Response> {
+    let client = Client::new();
+    let url = "https://api.github.com/repos/Valink-Solutions/teller/releases";
+    let resp = match client.get(url)
+        .header("User-Agent", "chunkvault-updater")
+        .send()
+        .await {
+        Ok(resp) => resp,
+        Err(_) => return Response::error("Failed to fetch releases", 500),
+    };
+
+    let releases: Vec<GitHubRelease> = resp.json().await.map_err(|_| "Failed to parse releases")?;
+
+    let total_downloads: i64 = releases.iter()
+        .flat_map(|release| &release.assets)
+        .map(|asset| asset.download_count)
+        .sum();
+
+
+    let response = json!({
+        "total_downloads": total_downloads
+    });
+
+    Ok(Response::from_json(&response)?)
+}
+
 
 async fn get_release(_req: worker::Request, ctx: RouteContext<()>) -> Result<Response> {
     let target = match ctx.param("target") {
@@ -120,7 +149,6 @@ async fn get_release(_req: worker::Request, ctx: RouteContext<()>) -> Result<Res
 }
 
 async fn get_download(_req: worker::Request, ctx: RouteContext<()>) -> Result<Response> {
-
     let target = match ctx.param("target") {
         Some(target) => target,
         None => return Response::error("Missing target", 400),
