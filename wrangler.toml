@@ -7,3 +7,7 @@ command = "cargo install -q worker-build && worker-build --release"
 
 [placement]
 mode = "smart"
+
+kv_namespaces = [
+  { binding = "KV_CHUNKVAULT_DOWNLOADS", id = "c70ef6b0c15c4f278fed8a7d0f8a1501" }
+]
