@@ -1,7 +1,8 @@
 name = "releases-worker"
 main = "build/worker/shim.mjs"
 compatibility_date = "2023-03-22"
-type = "rust"
+
+workers_dev = true
 
 
 [build]
@@ -11,5 +12,5 @@ command = "cargo install -q worker-build && worker-build --release"
 mode = "smart"
 
 kv_namespaces = [
-    { binding = "KV_CHUNKVAULT_DOWNLOADS", id = "c70ef6b0c15c4f278fed8a7d0f8a1501", preview_id = "f3457aec5c0e46d59f513fa468ca99b1" }
+    { binding = "KV_CHUNKVAULT_DOWNLOADS", id = "c70ef6b0c15c4f278fed8a7d0f8a1501" }
 ]
